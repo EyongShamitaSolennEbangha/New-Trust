@@ -12,6 +12,12 @@ router.use(protect);
 router.get('/profile', userController.getProfile);
 router.patch('/profile', auditLog('profile_updated', 'User'), userController.updateProfile);
 router.post('/avatar', uploadSinglePhoto('avatar'), userController.uploadAvatar);
+// ── Identity Verification ──────────────────────────────────────────────────
+router.post(
+  '/identity/verify',
+  uploadIdPhotos, // ← make sure this middleware exists
+  userController.submitIdentityVerification
+);
 router.get('/stats', userController.getUserStats);
 router.patch('/notification-preferences', userController.updateNotificationPreferences);
 
