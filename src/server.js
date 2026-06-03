@@ -12,6 +12,7 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 require('dotenv').config();
 
+
 const connectDB = require('./config/database');
 const { connectRedis } = require('./config/redis');
 const logger = require('./config/logger');
@@ -31,6 +32,7 @@ const publicRoutes = require('./routes/public.routes');
 const adminRoutes = require('./routes/admin.routes');
 const disputeRoutes = require('./routes/dispute.routes');
 const webhookRoutes = require('./routes/webhook.routes');
+const firebaseRoutes = require('./routes/firebase');
 
 // Connect Database
 connectDB();
@@ -56,15 +58,12 @@ app.use(mongoSanitize());
 app.use(xss());
 app.use(hpp());
 
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
-app.use(
-  cors({
-    origin: [process.env.CLIENT_URL, 'https://verify.trustledger.com'],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
-);
+app.use(cors({
+  origin: 'http://localhost:5173', // your Vite dev server
+  credentials: true,               // if you use cookies/sessions
+}));
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 const limiter = rateLimit({
@@ -122,7 +121,7 @@ app.use('/api/public', publicRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/disputes', disputeRoutes);
 app.use('/api/webhooks', webhookRoutes);
-
+app.use('/api/firebase', firebaseRoutes);
 // ─── 404 Handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.originalUrl} not found` });

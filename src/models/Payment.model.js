@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const crypto = require('crypto');
+const mongoose = require("mongoose");
+const crypto = require("crypto");
 
 const paymentSchema = new mongoose.Schema(
   {
@@ -7,45 +7,74 @@ const paymentSchema = new mongoose.Schema(
     paymentReference: {
       type: String,
       unique: true,
-      default: () => `PAY-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+      default: () =>
+        `PAY-${Date.now()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`,
     },
     agreement: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Agreement',
+      ref: "Agreement",
       required: true,
     },
 
     // ── Parties (debtor pays creditor) ────────────────────────────────────────
-    paidBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // debtor
-    receivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // creditor
+    paidBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    }, // debtor
+    receivedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    }, // creditor
 
     // ── Amount ────────────────────────────────────────────────────────────────
     amount: { type: Number, required: true, min: 0.01 },
-    currency: { type: String, default: 'NGN', uppercase: true },
+    currency: { type: String, default: "NGN", uppercase: true },
     exchangeRate: { type: Number, default: 1 }, // for multi-currency
     amountInBaseCurrency: Number,
 
     // ── Payment Method ────────────────────────────────────────────────────────
     paymentMethod: {
       type: String,
-      enum: ['cash', 'bank_transfer', 'card', 'mobile_money', 'crypto', 'other'],
+      enum: [
+        "cash",
+        "bank_transfer",
+        "card",
+        "mobile_money",
+        "crypto",
+        "other",
+      ],
       required: true,
     },
     paymentMethodDetails: {
+      provider: {
+        type: String,
+        enum: [
+          "mtn",
+          "orange",
+          "stripe",
+          "bank_transfer",
+          "cash",
+          "crypto",
+          "other",
+        ],
+      },
       bankName: String,
       accountLast4: String,
-      transactionId: String, // from bank/payment gateway
+      transactionId: String, // from bank/payment gateway or mobile money provider
+      gatewayReference: String,
       receiptUrl: String,
     },
 
     // ── Status ────────────────────────────────────────────────────────────────
     status: {
       type: String,
-      enum: ['pending', 'confirmed', 'disputed', 'reversed', 'failed'],
-      default: 'pending',
+      enum: ["pending", "confirmed", "disputed", "reversed", "failed"],
+      default: "pending",
     },
     confirmedAt: Date,
-    confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // creditor confirms
+    confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // creditor confirms
 
     // ── Installment Reference ─────────────────────────────────────────────────
     installmentNumber: Number,
@@ -63,6 +92,9 @@ const paymentSchema = new mongoose.Schema(
     isOnTime: Boolean,
     daysLate: { type: Number, default: 0 },
 
+    // ── Denormalized snapshot of agreement at time of payment
+    agreementSnapshot: { type: mongoose.Schema.Types.Mixed },
+
     // ── Stripe / Gateway ──────────────────────────────────────────────────────
     stripePaymentIntentId: String,
     stripeChargeId: String,
@@ -71,7 +103,7 @@ const paymentSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // ── Indexes ───────────────────────────────────────────────────────────────────
@@ -82,7 +114,7 @@ paymentSchema.index({ status: 1 });
 paymentSchema.index({ createdAt: -1 });
 
 // ── Pre-save: generate payment hash ──────────────────────────────────────────
-paymentSchema.pre('save', function (next) {
+paymentSchema.pre("save", function (next) {
   if (this.isNew) {
     const content = JSON.stringify({
       paymentReference: this.paymentReference,
@@ -92,9 +124,12 @@ paymentSchema.pre('save', function (next) {
       currency: this.currency,
       createdAt: new Date().toISOString(),
     });
-    this.paymentHash = crypto.createHash('sha256').update(content).digest('hex');
+    this.paymentHash = crypto
+      .createHash("sha256")
+      .update(content)
+      .digest("hex");
   }
   next();
 });
 
-module.exports = mongoose.model('Payment', paymentSchema);
+module.exports = mongoose.model("Payment", paymentSchema);

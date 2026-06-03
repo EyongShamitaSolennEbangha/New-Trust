@@ -6,7 +6,28 @@ const { uploadIdPhotos } = require('../middleware/upload.middleware');
 const auditLog = require('../middleware/auditLog.middleware');
 const { body } = require('express-validator');
 const validate = require('../validators/validate');
+const { messaging, userTokens } = require('../utils/firebase'); // import
+const { normalizePhone } = require('../utils/phone');
 
+
+// You can keep the helper function here, but it must be defined, not invoked
+
+async function sendPushNotification(phoneNumber, title, body) {
+  try {
+    const { getFCMToken, messaging } = require('../utils/firebase');
+    const fcmToken = await getFCMToken(phoneNumber);
+    if (!fcmToken) {
+      console.log(`No FCM token for ${phoneNumber}`);
+      return false;
+    }
+    const message = { notification: { title, body }, token: fcmToken };
+    await messaging.send(message);
+    return true;
+  } catch (error) {
+    console.error('Push notification error:', error);
+    return false;
+  }
+}
 router.use(protect);
 
 const createAgreementRules = [
@@ -45,5 +66,8 @@ router.post('/:id/remote/generate-link', auditLog('verification_link_generated',
 
 // ── Default ───────────────────────────────────────────────────────────────────
 router.patch('/:id/default', auditLog('agreement_defaulted', 'Agreement'), agreementController.markAsDefaulted);
+
+
+
 
 module.exports = router;
