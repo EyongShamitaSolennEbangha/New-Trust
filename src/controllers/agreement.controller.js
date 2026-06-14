@@ -243,84 +243,45 @@ exports.getAgreement = catchAsync(async (req, res, next) => {
   sendSuccess(res, { data: agreement });
 });
 
-// ── Initiate In-Person Verification (generate OTP) ───────────────────────────
 exports.initiateInPersonVerification = async (req, res) => {
   try {
-    const agreement = await loadAgreement(req.params.id);
-    if (!agreement) {
-      return res.status(404).json({ error: "Agreement not found." });
-    }
+    const agreement = await Agreement.findById(req.params.id);
+    if (!agreement) return res.status(404).json({ error: 'Agreement not found.' });
 
-    // Generate 6-digit code
+    // Generate OTP
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Store code in DB (with expiry)
-    agreement.inPersonVerification.otpCode = code;
-    agreement.inPersonVerification.otpExpiry = Date.now() + 10 * 60 * 1000; // 10 min
+    agreement.verificationCode = code;
+    agreement.verificationCodeExpires = Date.now() + 10 * 60 * 1000;
     await agreement.save();
 
-    const io = req.app.get("io");
-    await notificationService.createNotification(io, {
-      recipientId: agreement.debtor.user,
-      type: "otp_generated",
-      title: "Your verification code",
-      message: `Use code ${code} to verify the agreement in the app. This code expires in 10 minutes.`,
-      data: { agreementId: agreement._id },
-      channels: { inApp: true },
-      priority: "high",
-    });
+    // Get creditor's FCM token
+    const { getFCMToken, messaging } = require('../utils/firebase');
+    const creditorPhone = agreement.creditor.phone;
+    const fcmToken = await getFCMToken(creditorPhone);
 
-    // Send push notification if the debtor has a saved FCM token.
-    const fcmToken = await getFCMToken(agreement.debtor.phone);
-    let pushSent = false;
-    let smsFallbackSent = false;
-
-    if (fcmToken) {
-      try {
-        const message = {
-          notification: {
-            title: "TrustLedger Verification Code",
-            body: `Your code: ${code}`,
-          },
-          token: fcmToken,
-        };
-        await messaging.send(message);
-        pushSent = true;
-        console.log(`Push sent to ${agreement.debtor.phone}`);
-      } catch (err) {
-        console.error("FCM send failed:", err.message);
-      }
-    } else {
-      console.log(`No FCM token for ${agreement.debtor.phone}`);
+    if (!fcmToken) {
+      console.warn(`No FCM token for creditor ${creditorPhone}`);
+      // Optionally fallback to SMS or log (for testing)
+      console.log(`🔐 OTP for creditor: ${code}`);
+      return res.status(500).json({ error: 'Push notification failed – no token' });
     }
 
-    if (!pushSent) {
-      try {
-        await smsService.sendSMS(
-          agreement.debtor.phone,
-          `TrustLedger verification code: ${code}. Enter it in the app to complete in-person verification.`,
-        );
-        smsFallbackSent = true;
-        console.log(`SMS fallback sent to ${agreement.debtor.phone}`);
-      } catch (err) {
-        console.error("SMS fallback failed:", err.message);
-      }
-    }
-
-    res.json({
-      message: pushSent
-        ? "Verification code sent by push notification."
-        : smsFallbackSent
-          ? "Verification code sent by SMS fallback."
-          : "Unable to send verification notification. Use the code delivered locally or check server logs.",
-      code: process.env.NODE_ENV === "development" ? code : undefined,
+    // Send push notification
+    await messaging.send({
+      notification: {
+        title: '🔐 In-Person Verification Code',
+        body: `Your OTP code is: ${code}. Share this with the debtor.`,
+      },
+      token: fcmToken,
     });
+
+    console.log(`✅ Push sent to creditor ${creditorPhone}`);
+    res.json({ message: 'Verification code sent to your dashboard' });
   } catch (error) {
-    console.error("Initiate in-person error:", error);
+    console.error(error);
     res.status(500).json({ error: error.message });
   }
 };
-
 // ── Complete In-Person Verification (debtor submits OTP + signature) ──────────
 exports.completeInPersonVerification = catchAsync(async (req, res, next) => {
   const { otp, signature } = req.body;
@@ -405,6 +366,7 @@ exports.creditorSign = catchAsync(async (req, res, next) => {
   agreement.creditor.deviceInfo = req.get("User-Agent");
 
   // If debtor already signed, activate
+  // If debtor already signed, activate
   if (agreement.debtor.signedAt) {
     agreement.status = "active";
     agreement.activatedAt = new Date();
@@ -426,17 +388,23 @@ exports.creditorSign = catchAsync(async (req, res, next) => {
     });
 
     const io = req.app.get("io");
-    notificationService.emitAgreementStatusChange(io, agreement._id, {
-      status: "active",
-      agreementId: agreement.agreementId,
-    });
 
-    // Notify debtor
+    // Notify DEBTOR
     await notificationService.createNotification(io, {
       recipientId: agreement.debtor.user,
       type: "agreement_activated",
       title: "Agreement is now ACTIVE",
       message: `Agreement ${agreement.agreementId} is active. Your first payment is due on ${new Date(agreement.dueDate).toLocaleDateString()}.`,
+      data: { agreementId: agreement._id },
+      channels: { email: true, sms: true },
+    });
+
+    // ✅ Notify CREDITOR (this is the new part)
+    await notificationService.createNotification(io, {
+      recipientId: agreement.creditor.user,
+      type: "agreement_activated",
+      title: "Agreement is now ACTIVE",
+      message: `Agreement ${agreement.agreementId} has been fully signed and is now active.`,
       data: { agreementId: agreement._id },
       channels: { email: true, sms: true },
     });

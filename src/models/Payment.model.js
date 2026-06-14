@@ -15,6 +15,10 @@ const paymentSchema = new mongoose.Schema(
       ref: "Agreement",
       required: true,
     },
+    disbursed: { type: Boolean, default: false },
+    disbursedAt: Date,
+    disbursementReference: String,
+    disbursementStatus: String,
 
     // ── Parties (debtor pays creditor) ────────────────────────────────────────
     paidBy: {

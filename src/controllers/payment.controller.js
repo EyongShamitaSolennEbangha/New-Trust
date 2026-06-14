@@ -584,3 +584,63 @@ exports.getMyPayments = catchAsync(async (req, res) => {
 
   sendPaginated(res, { data: payments, total, page, limit });
 });
+
+
+// ── Disburse to Creditor via CamPay ─────────────────────────────────────────
+exports.disburseToCreditor = catchAsync(async (req, res, next) => {
+  const { paymentId, creditorPhone, amount, agreementId } = req.body;
+
+  // Find the payment record
+  const payment = await Payment.findById(paymentId).populate('agreement');
+  if (!payment) return next(new AppError('Payment not found.', 404));
+
+  // Only the platform admin or authorized service should call this
+  // You can add a role check or a secret API key
+  if (req.user.role !== 'admin' && !req.headers['x-internal-secret']) {
+    return next(new AppError('Not authorized to disburse funds.', 403));
+  }
+
+  // Optionally, ensure this payment hasn't been disbursed before
+  if (payment.disbursed) {
+    return next(new AppError('This payment has already been disbursed.', 400));
+  }
+
+  // Validate amount
+  const parsedAmount = parseFloat(amount);
+  if (isNaN(parsedAmount) || parsedAmount <= 0) {
+    return next(new AppError('Invalid amount.', 400));
+  }
+
+  // Clean phone number (remove spaces, ensure it starts with 237 without '+')
+  let cleanPhone = creditorPhone.replace(/\s+/g, '');
+  if (cleanPhone.startsWith('+')) cleanPhone = cleanPhone.slice(1);
+  if (!cleanPhone.startsWith('237')) cleanPhone = '237' + cleanPhone;
+
+  // Call CamPay service
+  const camPayService = require('../services/camPay.service');
+  const externalRef = `payout_${payment._id}_${Date.now()}`;
+  const result = await camPayService.disburse(
+    parsedAmount.toString(),
+    cleanPhone,
+    `Repayment for agreement ${payment.agreement?.agreementId || agreementId}`,
+    externalRef
+  );
+
+  // Update payment record
+  payment.disbursed = true;
+  payment.disbursedAt = new Date();
+  payment.disbursementReference = result.reference || externalRef;
+  payment.disbursementStatus = result.status;
+  await payment.save();
+
+  // Optionally, mark the creditor's balance as settled
+
+  sendSuccess(res, {
+    message: 'Disbursement initiated successfully',
+    data: {
+      transactionReference: result.reference,
+      status: result.status,
+      externalReference: externalRef,
+    },
+  });
+});

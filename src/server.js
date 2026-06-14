@@ -12,6 +12,8 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 require('dotenv').config();
 
+console.log('CamPay token exists?', !!process.env.CAMPAY_PERMANENT_ACCESS_TOKEN);
+
 
 const connectDB = require('./config/database');
 const { connectRedis } = require('./config/redis');
@@ -33,6 +35,7 @@ const adminRoutes = require('./routes/admin.routes');
 const disputeRoutes = require('./routes/dispute.routes');
 const webhookRoutes = require('./routes/webhook.routes');
 const firebaseRoutes = require('./routes/firebase');
+
 
 // Connect Database
 connectDB();
@@ -122,6 +125,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/disputes', disputeRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/firebase', firebaseRoutes);
+app.use('/api/admin', adminRoutes);
 // ─── 404 Handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.originalUrl} not found` });

@@ -15,10 +15,12 @@ const userTokens = new Map();
 
 function normalizePhone(phone) {
   let cleaned = String(phone).replace(/\s/g, '');
-  if (!cleaned.startsWith('+')) cleaned = '+' + cleaned;
+  if (!cleaned.startsWith('+')) {
+    if (cleaned.startsWith('237')) cleaned = '+' + cleaned;
+    else cleaned = '+237' + cleaned;
+  }
   return cleaned;
 }
-
 async function saveFCMToken(phone, token) {
   const key = `fcm:${normalizePhone(phone)}`;
   try {

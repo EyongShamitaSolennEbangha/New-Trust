@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/user.controller');
-const { protect, restrictTo, requireIdentityVerification } = require('../middleware/auth.middleware');
+const { protect, restrictTo } = require('../middleware/auth.middleware');
 const { uploadSinglePhoto, uploadIdPhotos } = require('../middleware/upload.middleware');
 const auditLog = require('../middleware/auditLog.middleware');
 
@@ -12,16 +12,17 @@ router.use(protect);
 router.get('/profile', userController.getProfile);
 router.patch('/profile', auditLog('profile_updated', 'User'), userController.updateProfile);
 router.post('/avatar', uploadSinglePhoto('avatar'), userController.uploadAvatar);
-// ── Identity Verification ──────────────────────────────────────────────────
+
+// ── Identity Verification ────────────────────────────────────────────────────
 router.post(
   '/identity/verify',
-  uploadIdPhotos, // ← make sure this middleware exists
+  uploadIdPhotos,
   userController.submitIdentityVerification
 );
 router.get('/stats', userController.getUserStats);
 router.patch('/notification-preferences', userController.updateNotificationPreferences);
 
-// ── Identity Verification ─────────────────────────────────────────────────────
+// ── Verify Identity (alternative endpoint) ───────────────────────────────────
 router.post(
   '/verify-identity',
   uploadIdPhotos,
@@ -29,16 +30,27 @@ router.post(
   userController.submitIdentityVerification
 );
 
-// ── View another user's profile ───────────────────────────────────────────────
+// ── View another user's profile ──────────────────────────────────────────────
 router.get('/:id/profile', userController.getProfile);
 
 // ── Admin routes ──────────────────────────────────────────────────────────────
 router.get('/', restrictTo('admin', 'moderator'), userController.getAllUsers);
+router.delete('/:id', restrictTo('admin'), userController.deleteUser);
 router.patch(
   '/:id/status',
   restrictTo('admin'),
   auditLog('account_status_changed', 'User'),
   userController.updateAccountStatus
+);
+router.post(
+  '/:id/verify-identity',
+  restrictTo('admin'),
+  userController.approveKyc
+);
+router.post(
+  '/:id/reject-kyc',
+  restrictTo('admin'),
+  userController.rejectKyc
 );
 
 module.exports = router;

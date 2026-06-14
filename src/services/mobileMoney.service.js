@@ -1,51 +1,42 @@
-const crypto = require("crypto");
-const logger = require("../config/logger");
+const axios = require('axios');
 
-const supportedProviders = ["mtn", "orange"];
-
-exports.initiateMobileMoneyCollection = async (
-  provider,
-  amount,
-  currency,
-  phone,
-  agreementId,
-) => {
-  if (!supportedProviders.includes(provider)) {
-    throw new Error(`Unsupported mobile money provider: ${provider}`);
-  }
-
-  const transactionId = `MM-${provider.toUpperCase()}-${Date.now()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
-  const gatewayReference = `GW-${provider.toUpperCase()}-${Date.now()}`;
-
-  logger.info(
-    `Mobile money collection requested: provider=${provider}, amount=${amount}, currency=${currency}, phone=${phone}, agreement=${agreementId}`,
-  );
-
-  if (process.env.MOBILE_MONEY_SIMULATE === "true") {
-    return {
-      status: "confirmed",
-      transactionId,
-      gatewayReference,
-      message: `Simulated ${provider.toUpperCase()} payment confirmed.`,
+class MobileMoneyService {
+  constructor() {
+    this.apiUrl = process.env.CAMPAY_API_URL || 'https://www.campay.net/api/';
+    this.accessToken = process.env.CAMPAY_PERMANENT_ACCESS_TOKEN;
+    this.headers = {
+      'Authorization': `Token ${this.accessToken}`,
+      'Content-Type': 'application/json',
     };
   }
 
-  return {
-    status: "pending",
-    transactionId,
-    gatewayReference,
-    message: `A ${provider.toUpperCase()} payment request has been created. Confirm the payment from the mobile wallet prompt on ${phone}.`,
-  };
-};
+  async initiateMobileMoneyCollection(provider, amount, currency, phone, agreementId) {
+    // Clean phone: remove spaces, ensure it starts with 237 without '+'
+    let cleanPhone = phone.replace(/\s+/g, '');
+    if (cleanPhone.startsWith('+')) cleanPhone = cleanPhone.slice(1);
+    if (!cleanPhone.startsWith('237')) cleanPhone = '237' + cleanPhone;
 
-exports.parseCallbackPayload = async (payload) => {
-  return {
-    provider: payload.provider,
-    paymentId: payload.paymentId,
-    transactionId: payload.transactionId,
-    gatewayReference: payload.gatewayReference,
-    status: payload.status,
-    amount: payload.amount,
-    currency: payload.currency,
-  };
-};
+    const payload = {
+      amount: amount.toString(),
+      currency: 'XAF',
+      to: cleanPhone,
+      description: `Payment for agreement ${agreementId}`,
+      external_reference: `payment_${agreementId}_${Date.now()}`,
+    };
+
+    try {
+      const response = await axios.post(`${this.apiUrl}collect/`, payload, { headers: this.headers });
+      return {
+        status: response.data.status === 'SUCCESSFUL' ? 'confirmed' : 'pending',
+        transactionId: response.data.reference,
+        gatewayReference: response.data.reference,
+        message: response.data.message || 'Payment initiated',
+      };
+    } catch (error) {
+      console.error('CamPay error:', error.response?.data || error.message);
+      throw new Error('Mobile money payment failed');
+    }
+  }
+}
+
+module.exports = new MobileMoneyService();

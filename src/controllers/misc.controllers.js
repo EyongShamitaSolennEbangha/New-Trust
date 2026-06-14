@@ -7,6 +7,12 @@ const AppError = require("../utils/AppError");
 const { sendSuccess } = require("../utils/response.utils");
 const trustScoreService = require("../services/trustScore.service");
 const notificationService = require("../services/notification.service");
+const {
+  getDashboardStats,
+  getAuditLogs,
+  listDefaulter,
+  removeDefaulter,
+} = require("../controllers/misc.controllers");
 
 exports.getMyTrustScore = catchAsync(async (req, res) => {
   const user = await User.findById(req.user._id).select(
@@ -260,9 +266,8 @@ exports.getAllDisputes = catchAsync(async (req, res) => {
 // ════════════════════════════════════════════════════════════
 // public.controller.js — verify.trustledger.com portal
 // ════════════════════════════════════════════════════════════
-
 exports.searchDefaulters = catchAsync(async (req, res) => {
-  const { name, agreementId, page = 1, limit = 10 } = req.query;
+  const { name, phone, email, page = 1, limit = 10 } = req.query;
   const skip = (page - 1) * limit;
 
   const filter = { isDefaulter: true, isPubliclySearchable: true };
@@ -272,20 +277,29 @@ exports.searchDefaulters = catchAsync(async (req, res) => {
       { lastName: new RegExp(name, "i") },
     ];
   }
+  if (phone) {
+    // Normalize: remove spaces, ensure leading '+'
+    let normalizedPhone = phone.replace(/\s/g, "");
+    if (!normalizedPhone.startsWith("+"))
+      normalizedPhone = "+" + normalizedPhone;
+    filter.phone = normalizedPhone;
+  }
+  if (email) {
+    filter.email = new RegExp(email, "i");
+  }
 
   const [users, total] = await Promise.all([
     User.find(filter)
       .skip(skip)
       .limit(parseInt(limit))
       .select(
-        "firstName lastName trustScore.score trustScore.level defaulterListedAt",
+        "firstName lastName phone trustScore.score trustScore.level defaulterListedAt",
       ),
     User.countDocuments(filter),
   ]);
 
   sendPaginated(res, { data: users, total, page, limit });
 });
-
 exports.verifyAgreementPublic = catchAsync(async (req, res, next) => {
   const { agreementId } = req.params;
   const agreement = await Agreement.findOne({ agreementId }).select(

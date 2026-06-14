@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: trustledger-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI_PROD
+        sync: false   # you'll set this in the dashboard
+      - key: JWT_SECRET
+        generateValue: true   # Render auto-generates a secret
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: ENCRYPTION_SALT
+        generateValue: true
+      - key: REDIS_HOST
+        sync: false   # you need a Redis service on Render or external
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: CAMPAY_PERMANENT_ACCESS_TOKEN
+        sync: false
+      - key: CAMPAY_API_URL
+        value: https://www.campay.net/api/
+      - key: CAMPAY_MODE
+        value: live
