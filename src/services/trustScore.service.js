@@ -2,28 +2,38 @@ const User = require("../models/User.model");
 const Agreement = require("../models/Agreement.model");
 const Payment = require("../models/Payment.model");
 const Dispute = require("../models/Dispute.model");
-const { setCache, getCache } = require("../config/redis");
+const { setCache, getCache, deleteCache } = require("../config/redis");
 const logger = require("../config/logger");
 
 /**
  * TrustLedger AI-Powered Trust Score Engine
  *
- * Scoring breakdown (0–1000):
+ * Scoring breakdown (final score 0–100):
  *  40% — Payment history (on-time payments, defaults, overdue frequency)
  *  30% — Agreement completion rate (completed vs defaulted/abandoned)
  *  20% — Behaviour patterns (login frequency, response time, dispute behaviour)
  *  10% — Community / platform feedback (dispute resolutions, peer feedback)
+ * Plus identity verification bonus.
  */
 exports.calculateTrustScore = async (userId) => {
   try {
     const cacheKey = `trustscore:${userId}`;
-    const cached = await getCache(cacheKey);
+    let cached = await getCache(cacheKey);
+    
+    // Check if cached score is from the old 0–1000 scale (value > 100)
+    if (cached && cached.total > 100) {
+      // Invalidate stale cache
+      await deleteCache(cacheKey);
+      cached = null;
+      logger.info(`Stale cache (old scale) invalidated for user ${userId}`);
+    }
+    
     if (cached) return cached;
 
     const user = await User.findById(userId);
     if (!user) return null;
 
-    // ── 1. Payment History (40 pts max = 400) ─────────────────────────────────
+    // ── 1. Payment History (max 40 points) ────────────────────────────────
     const payments = await Payment.find({
       paidBy: userId,
       status: "confirmed",
@@ -34,11 +44,11 @@ exports.calculateTrustScore = async (userId) => {
 
     const onTimeRate = totalPayments > 0 ? onTimePayments / totalPayments : 0.5;
     const avgLateness = totalPayments > 0 ? lateDays / totalPayments : 0;
-    const latenesspenalty = Math.min(avgLateness * 2, 100);
-    const paymentScore = Math.round(onTimeRate * 400 - latenesspenalty);
+    const latenessPenalty = Math.min(avgLateness * 2, 40);
+    const paymentScoreRaw = onTimeRate * 40 - latenessPenalty;
+    const paymentScore = Math.max(0, Math.min(40, Math.round(paymentScoreRaw)));
 
-    // ── 2. Agreement Completion (30 pts max = 300) ─────────────────────────────
-    // For a given user, only count agreements where they are the debtor for default penalty
+    // ── 2. Agreement Completion (max 30 points) ───────────────────────────
     const agreementsAsDebtor = await Agreement.find({
       "debtor.user": userId,
       status: { $in: ["completed", "defaulted", "cancelled"] },
@@ -49,26 +59,28 @@ exports.calculateTrustScore = async (userId) => {
     });
 
     const completed = [...agreementsAsDebtor, ...agreementsAsCreditor].filter(
-      (a) => a.status === "completed",
+      (a) => a.status === "completed"
     ).length;
     const defaulted = agreementsAsDebtor.filter(
-      (a) => a.status === "defaulted",
-    ).length; // only debtor's defaults hurt them
+      (a) => a.status === "defaulted"
+    ).length;
 
     const total = agreementsAsDebtor.length + agreementsAsCreditor.length;
     const completionRate = total > 0 ? completed / total : 0.5;
-    const defaultPenalty = defaulted * 50;
-    const completionScore = Math.round(completionRate * 300 - defaultPenalty);
+    const defaultPenalty = defaulted * 5;
+    const completionScoreRaw = completionRate * 30 - defaultPenalty;
+    const completionScore = Math.max(0, Math.min(30, Math.round(completionScoreRaw)));
 
-    // ── 3. Behaviour Patterns (20 pts max = 200) ──────────────────────────────
+    // ── 3. Behaviour Patterns (max 20 points) ─────────────────────────────
     const metrics = user.behaviorMetrics || {};
     const responseScore = metrics.avgResponseTimeHours
-      ? Math.max(0, 100 - metrics.avgResponseTimeHours * 5)
-      : 50;
-    const loginScore = Math.min((metrics.loginFrequencyPerWeek || 0) * 10, 100);
+      ? Math.max(0, 20 - metrics.avgResponseTimeHours * 1)
+      : 10;
+    const loginScore = Math.min((metrics.loginFrequencyPerWeek || 0) * 2, 10);
     const behaviourScore = Math.round(responseScore + loginScore);
+    const behaviourScoreFinal = Math.max(0, Math.min(20, behaviourScore));
 
-    // ── 4. Community / Disputes (10 pts max = 100) ────────────────────────────
+    // ── 4. Community / Disputes (max 10 points) ───────────────────────────
     const disputes = await Dispute.find({
       $or: [{ initiatedBy: userId }, { respondent: userId }],
     });
@@ -77,45 +89,34 @@ exports.calculateTrustScore = async (userId) => {
         (d.status === "resolved_creditor" &&
           String(d.initiatedBy) === String(userId)) ||
         (d.status === "resolved_debtor" &&
-          String(d.respondent) === String(userId)),
+          String(d.respondent) === String(userId))
     ).length;
     const openDisputes = disputes.filter((d) => d.status === "open").length;
-    const communityScore = Math.max(
+    const communityScoreRaw = resolvedFavourably * 2 - openDisputes * 1.5;
+    const communityScore = Math.max(0, Math.min(10, Math.round(communityScoreRaw)));
+
+    // ── Identity bonus ────────────────────────────────────────────────────
+    const identityBonus = user.isIdentityVerified ? 5 : 0;
+
+    // ── Final score (0–100) ───────────────────────────────────────────────
+    const finalScore = Math.max(
       0,
-      Math.round(resolvedFavourably * 20 - openDisputes * 15),
+      Math.min(
+        100,
+        paymentScore + completionScore + behaviourScoreFinal + communityScore + identityBonus
+      )
     );
 
-    // ── Identity bonus ─────────────────────────────────────────────────────────
-    const identityBonus = user.isIdentityVerified ? 50 : 0;
-
-    // ── Final score (scale 0–1000, then compress to 0–100) ────────────────────────
-    const rawScore =
-      paymentScore +
-      completionScore +
-      behaviourScore +
-      communityScore +
-      identityBonus;
-    const normalizedScore = Math.max(0, Math.min(1000, rawScore));
-    const finalScore = Math.round(normalizedScore / 10); // 0–100
-
     const breakdown = {
-      paymentHistory: Math.max(0, paymentScore),
-      agreementCompletion: Math.max(0, completionScore),
-      behaviourPatterns: Math.max(0, behaviourScore),
-      communityFeedback: Math.max(0, communityScore),
+      paymentHistory: paymentScore,
+      agreementCompletion: completionScore,
+      behaviourPatterns: behaviourScoreFinal,
+      communityFeedback: communityScore,
       identityBonus,
-      totalRaw: normalizedScore,
       total: finalScore,
     };
 
-    // Cache for 1 hour
     await setCache(cacheKey, breakdown, 3600);
-
-    logger.info(`Trust score calculated for ${userId}: ${finalScore}`);
-    return breakdown;
-    // Cache for 1 hour
-    await setCache(cacheKey, breakdown, 3600);
-
     logger.info(`Trust score calculated for ${userId}: ${finalScore}`);
     return breakdown;
   } catch (err) {
@@ -126,13 +127,18 @@ exports.calculateTrustScore = async (userId) => {
 
 /**
  * Persist updated trust score to User document.
+ * If the stored score is > 100 (old scale), it will be overwritten automatically.
  */
 exports.updateUserTrustScore = async (
   userId,
-  reason = "Periodic recalculation",
+  reason = "Periodic recalculation"
 ) => {
   const breakdown = await exports.calculateTrustScore(userId);
   if (!breakdown) return;
+
+  const user = await User.findById(userId);
+  // Force update if old score is present (score > 100)
+  const needsFix = user && user.trustScore?.score > 100;
 
   const level = getTrustLevel(breakdown.total);
 
@@ -143,10 +149,14 @@ exports.updateUserTrustScore = async (
     $push: {
       "trustScore.history": {
         $each: [{ score: breakdown.total, reason }],
-        $slice: -50, // keep last 50 entries
+        $slice: -50,
       },
     },
   });
+
+  if (needsFix) {
+    logger.info(`Fixed old trust score for user ${userId} (was ${user.trustScore.score} → now ${breakdown.total})`);
+  }
 
   return { score: breakdown.total, level, breakdown };
 };

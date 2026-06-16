@@ -50,7 +50,7 @@ const userSchema = new mongoose.Schema(
 
     // ── Trust Score ──────────────────────────────────────────────────────────
     trustScore: {
-      score: { type: Number, default: 500, min: 0, max: 1000 },
+      score: { type: Number, default: 50, min: 0, max: 100 },
       level: {
         type: String,
         enum: ['unverified', 'bronze', 'silver', 'gold', 'platinum'],
